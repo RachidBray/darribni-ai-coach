@@ -130,10 +130,3 @@ Both the chat and the weekly planner save workouts the same way and call the sam
 6. **Activate** the Telegram, Strava and Weekly Planner workflows, then text your bot.
 
 > All IDs, credentials and private values were removed from the exports.
-
----
-
-## Links
-
-- Portfolio: https://addictedtoweb.com/projects-partnerships/
-- LinkedIn: https://www.linkedin.com/in/rachidbraymi/
