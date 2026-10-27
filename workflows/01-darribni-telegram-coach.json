@@ -1,0 +1,328 @@
+{
+  "name": "Darribni - Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        3280,
+        688
+      ],
+      "id": "e93b2e36-6a72-46f3-8cf6-ce6897ce5d34",
+      "name": "Telegram Trigger",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-opus-4.6",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3904,
+        880
+      ],
+      "id": "9ff4af50-1102-4174-a227-abed3d0b9823",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "={{ $json.systemPrompt }}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        3904,
+        688
+      ],
+      "id": "34185273-b3cc-465d-a945-7774ecae525c",
+      "name": "Basic LLM Chain (Call AI)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.first().json.text;\nlet replyText = aiResponse;\nlet newWorkouts = null;\nlet newCoachNotes = null;\n\nconst jsonRegex = /```(?:json)?\\s*([\\s\\S]*?)\\s*```/g;\nlet match;\nlet foundBlock = false;\n\nwhile ((match = jsonRegex.exec(aiResponse)) !== null) {\n    foundBlock = true;\n    try {\n        const parsed = JSON.parse(match[1]);\n        if (parsed.new_workouts) {\n            newWorkouts = parsed.new_workouts;\n            replyText = replyText.replace(match[0], '');\n        }\n        if (parsed.update_coach_notes) {\n            newCoachNotes = parsed.update_coach_notes;\n            replyText = replyText.replace(match[0], '');\n        }\n    } catch (e) {}\n}\n\nif (!foundBlock) {\n    let fallbackMatch = aiResponse.match(/(\\{[\\s\\S]*\"(?:new_workouts|update_coach_notes)\"[\\s\\S]*\\})/);\n    if (fallbackMatch) {\n        try {\n            const parsed = JSON.parse(fallbackMatch[1]);\n            if (parsed.new_workouts) {\n                newWorkouts = parsed.new_workouts;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n            if (parsed.update_coach_notes) {\n                newCoachNotes = parsed.update_coach_notes;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n        } catch (e) {}\n    }\n}\n\nlet finalReply = replyText.trim();\nif (finalReply.length > 4000) {\n    finalReply = finalReply.substring(0, 4000) + '\\n\\n...[Message truncated by AI Coach]';\n}\n\nreturn {\n    replyText: finalReply,\n    newWorkouts: newWorkouts,\n    newCoachNotes: newCoachNotes,\n    athleteId: $('Code Prepare Prompt').item.json.athleteId,\n    userMessage: $('Code Prepare Prompt').item.json.userMessage\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4256,
+        688
+      ],
+      "id": "55959199-2b21-441b-b0bf-77517216e3f7",
+      "name": "Code in JavaScript (Parse AI)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4464,
+        688
+      ],
+      "id": "cbd1bb93-fc65-459a-b65d-37e03acd082e",
+      "name": "Send a text message (Reply to Telegram)",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversations (athlete_id, role, content) VALUES\n('{{ $json.athleteId }}', 'user', $$ {{ $json.userMessage }} $$),\n('{{ $json.athleteId }}', 'coach', $$ {{ $json.replyText }} $$);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4464,
+        496
+      ],
+      "id": "d1f04140-a281-4663-9459-e680e5c489d9",
+      "name": "Execute a SQL query (Save History)",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst userMessage = $('Telegram Trigger').item.json.message.text;\n\n// Format the History\nlet historyText = \"\";\nif (data.history) {\n    data.history.reverse().forEach(msg => {\n        historyText += `${msg.role.toUpperCase()}: ${msg.content}\\n`;\n    });\n}\n\n// Build the System Prompt\nconst systemPrompt = `You are an elite endurance coach.\n\n### ATHLETE PROFILE\nMetrics: ${JSON.stringify(data.athlete.metrics || {})}\nCoach Notes: ${data.athlete.coach_notes || 'None'}\n\n### CURRENT STATE\nActive Goal: ${data.active_goal ? data.active_goal.description : 'No active goal set.'}\n\n### RECENT CONTEXT\nCompleted Activities: ${JSON.stringify(data.activities || [])}\nPlanned Workouts: ${JSON.stringify(data.workouts || [])}\n\n### INSTRUCTIONS\nCRITICAL RULES:\n1. Keep your conversational response extremely short and concise (under 150 words). Do not write long essays.\n2. If you generate workouts, ONLY generate for the immediate next 7 days. Never generate weeks in advance.\n3. If you output JSON, you MUST wrap it strictly in \\`\\`\\`json markdown blocks with exact keys!\n\nIf you need to generate new workouts, output EXACTLY this format:\n\\`\\`\\`json\n{\"new_workouts\": [{\"scheduled_date\": \"YYYY-MM-DD\", \"sport_type\": \"Run\", \"description\": \"...\", \"target_duration_mins\": 45}]}\n\\`\\`\\`\n\nIf you need to remember a constraint, output EXACTLY this format:\n\\`\\`\\`json\n{\"update_coach_notes\": \"...\"}\n\\`\\`\\`\n\n### HISTORY\n${historyText}`;\n\nreturn {\n    systemPrompt: systemPrompt,\n    userMessage: userMessage,\n    athleteId: data.athlete.id\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        688
+      ],
+      "id": "e5cd67da-7d60-4d09-9bf8-30907685c131",
+      "name": "Code Prepare Prompt"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH athlete_data AS (\n    SELECT * FROM athletes WHERE telegram_id = '{{ $json.message.from.id }}' LIMIT 1\n),\ngoal_data AS (\n    SELECT * FROM goals WHERE athlete_id = (SELECT id FROM athlete_data) AND status = 'Active' LIMIT 1\n),\nrecent_activities AS (\n    SELECT sport_type, summary_metrics, start_date \n    FROM activities \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND start_date > NOW() - INTERVAL '7 days'\n),\nrecent_workouts AS (\n    SELECT scheduled_date, sport_type, description, status \n    FROM workouts \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND scheduled_date > NOW() - INTERVAL '7 days'\n),\nchat_history AS (\n    SELECT role, content \n    FROM conversations \n    WHERE athlete_id = (SELECT id FROM athlete_data) \n    ORDER BY timestamp DESC LIMIT 10\n)\nSELECT \n    row_to_json(a.*) as athlete,\n    row_to_json(g.*) as active_goal,\n    (SELECT json_agg(row_to_json(ra.*)) FROM recent_activities ra) as activities,\n    (SELECT json_agg(row_to_json(rw.*)) FROM recent_workouts rw) as workouts,\n    (SELECT json_agg(row_to_json(ch.*)) FROM chat_history ch) as history\nFROM athlete_data a\nLEFT JOIN goal_data g ON true;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3488,
+        688
+      ],
+      "id": "d6c4a4c2-7ece-4372-a0c1-1863e3821a1b",
+      "name": "Execute a SQL query (Fetch Data)",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workouts = $input.first().json.newWorkouts;\nconst athleteId = $input.first().json.athleteId;\n\nif (!workouts || workouts.length === 0) return [];\n\nreturn workouts.map(workout => {\n    return {\n        json: {\n            athleteId: athleteId,\n            scheduled_date: workout.scheduled_date || workout.scheduleddate || new Date().toISOString().split('T')[0],\n            sport_type: workout.sport_type || workout.sporttype || 'Run',\n            title: workout.title || workout.sport_type || workout.sporttype || 'Workout',\n            description: workout.description || 'Workout planned by AI Coach',\n            target_duration_mins: workout.target_duration_mins || workout.targetdurationmins || 60\n        }\n    };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4256,
+        912
+      ],
+      "id": "b9da8b02-57c6-4526-9b6c-fd3afd37814a",
+      "name": "Code Split Workouts"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workouts (athlete_id, scheduled_date, sport_type, title, description, target_duration_mins)\nVALUES (\n    '{{ $json.athleteId }}',\n    '{{ $json.scheduled_date }}',\n    '{{ $json.sport_type }}',\n    '{{ $json.title }}',\n    $$ {{ $json.description }} $$,\n    {{ $json.target_duration_mins }}\n)\nRETURNING id AS workout_db_id, athlete_id, scheduled_date, sport_type, title, description, target_duration_mins;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4256,
+        1120
+      ],
+      "id": "002045f3-796d-41b6-a00f-66ca96478501",
+      "name": "Postgres (Save Workouts)",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECT_DARRIBNI__GOOGLE_CALENDAR_SYNC",
+          "mode": "list",
+          "cachedResultName": "Darribni - Google Calendar Sync"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4464,
+        1120
+      ],
+      "id": "217ec5a9-5d4b-4332-995d-a1a8c50e7844",
+      "name": "Execute Workflow (Sync to Calendar)"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query (Fetch Data)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain (Call AI)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain (Call AI)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript (Parse AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript (Parse AI)": {
+      "main": [
+        [
+          {
+            "node": "Send a text message (Reply to Telegram)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute a SQL query (Save History)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code Split Workouts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain (Call AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query (Fetch Data)": {
+      "main": [
+        [
+          {
+            "node": "Code Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Split Workouts": {
+      "main": [
+        [
+          {
+            "node": "Postgres (Save Workouts)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres (Save Workouts)": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow (Sync to Calendar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

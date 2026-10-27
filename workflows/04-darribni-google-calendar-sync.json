@@ -1,0 +1,102 @@
+{
+  "name": "Darribni - Google Calendar Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        -16
+      ],
+      "id": "17fbf188-22c1-4dc0-b351-51747875b198",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE workouts SET gcal_event_id = '{{ $json.id }}' WHERE id = '{{ $('When Executed by Another Workflow').item.json.workout_db_id }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1056,
+        -16
+      ],
+      "id": "88ec3f73-3ca5-4f1c-ae32-db6b2de78d7f",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "YOUR_CALENDAR_ID@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Darribni"
+        },
+        "start": "={{ $json.scheduled_date ? String($json.scheduled_date).substring(0,10) : '' }}",
+        "end": "={{ $json.scheduled_date ? String($json.scheduled_date).substring(0,10) : '' }}",
+        "additionalFields": {
+          "allday": "yes",
+          "color": "={{ ($json.sport_type || '').toLowerCase() === 'run' ? '11' : (($json.sport_type || '').toLowerCase() === 'ride' || ($json.sport_type || '').toLowerCase() === 'cycling' ? '9' : '8') }}",
+          "description": "={{ $json.description }}\n\nDuration: {{ $json.target_duration_mins }} mins\n",
+          "summary": "={{ $json.sport_type }}: {{ $json.title || 'Workout' }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        848,
+        -16
+      ],
+      "id": "ee5d6cd0-201c-4c64-83f7-053f3fdc23c4",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

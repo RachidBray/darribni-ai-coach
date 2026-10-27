@@ -1,0 +1,187 @@
+{
+  "name": "Strava Social Manager (subworkflow)",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const data = $input.all();\nlet output = '';\n\nconst usefulKeys = [\n  'object_data.name',\n  'object_data.sport_type',\n  'object_data.distance',\n  'object_data.moving_time',\n  'object_data.total_elevation_gain',\n  'object_data.calories',\n  'object_data.average_speed',\n  'object_data.workout_type'\n];\n\n\nfunction flattenJson(obj, prefix = '') {\n  let str = '';\n  for (const key in obj) {\n    const fullKey = prefix ? `${prefix}.${key}` : key;\n    if (typeof obj[key] === 'object' && obj[key] !== null) {\n      str += flattenJson(obj[key], fullKey);\n    } else {\n      if (usefulKeys.includes(fullKey)) {\n        str += `${fullKey}: ${obj[key]}\\n`;\n      }\n    }\n  }\n  return str;\n}\n\ndata.forEach(item => {\n  output += flattenJson(item.json);\n  output += '\\n---\\n';\n});\n\nreturn [{ json: { data: output } }];"
+      },
+      "id": "fedb6265-ed57-4dcd-b7fb-02f9ff4da33b",
+      "name": "Combine Everything",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        864,
+        352
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "model": "openrouter/free",
+        "options": {}
+      },
+      "id": "e71bbb64-bc63-4117-97f2-2dfc3fd73fca",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "position": [
+        1104,
+        560
+      ],
+      "typeVersion": 1,
+      "retryOnFail": true,
+      "credentials": {
+        "openRouterApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fe37d921-5f51-4809-8fa9-e93b0983a566",
+              "name": "Name",
+              "type": "string",
+              "value": "={{ $json.text.match(/Title:\\s*(.+)/)?.[1]?.trim() }}"
+            },
+            {
+              "id": "e5d97791-60cc-4d5c-8138-f924c4b8356f",
+              "name": "Description",
+              "value": "={{ $json.text.match(/Description:\\s*(.+)/)?.[1]?.trim() ?? '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "938bbdea-fdc4-4295-b951-f6cd954b187d",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        1472,
+        352
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "activityId": "={{ $('When Executed by Another Workflow').item.json.object_id }}",
+        "updateFields": {
+          "description": "={{ $json.Description }}",
+          "name": "={{ $json.Name }}"
+        }
+      },
+      "id": "261788af-6876-45f0-9f68-d8e6f713f67d",
+      "name": "Strava",
+      "type": "n8n-nodes-base.strava",
+      "position": [
+        1680,
+        352
+      ],
+      "typeVersion": 1.1,
+      "credentials": {
+        "stravaOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Strava account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a Strava activity title generator.\n\nRead the activity data and apply EXACTLY one rule based on sport_type. No explanations, no extra text.\n\nSPORT TYPE: {{ $json.data.match(/sport_type: (\\S+)/)?.[1] }}\nACTIVITY NAME: {{ $json.data.match(/name: (.+)/)?.[1] }}\n\nRULES:\n\n1. VIRTUAL\nIf sport_type IN [\"VirtualRide\", \"VirtualRun\"] OR name contains \"Zwift\" or \"MyWhoosh\":\nTitle = حصة منزلية 🏠\nDescription = [original activity name, no translation]\n\n2. CYCLING\nIf sport_type IN [\"Ride\", \"MountainBikeRide\", \"GravelRide\", \"EBikeRide\", \"EMountainBikeRide\"]:\nTitle = جولة بالدراجة 🚴\n\n3. RUNNING\nIf sport_type = \"TrailRun\":\nTitle = حصة جري جبلي ⛰️🏃\nIf sport_type = \"Run\":\nTitle = حصة جري 🏃‍♂️\n\n4. WALKING\nIf sport_type = \"Walk\":\nTitle = جولة مشي 🚶‍♂️\n\n5. ANYTHING ELSE:\nTitle = [relevant Arabic title based on the activity name]\n\nOUTPUT FORMAT — follow this exactly, nothing before or after:\n\nIf sport_type is VirtualRide or VirtualRun:\nTitle: [Generated Title]\nDescription: [Original activity name]\n\nFor ALL other sport types, output ONLY this, nothing else:\nTitle: [Generated Title]",
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1104,
+        352
+      ],
+      "id": "f93b6a89-0698-417b-af42-d7de455a4e46",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        528,
+        352
+      ],
+      "id": "db456cd2-a6c8-416a-b30e-8da70bbb4bb6",
+      "name": "When Executed by Another Workflow"
+    }
+  ],
+  "connections": {
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Strava",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Everything": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Combine Everything",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
