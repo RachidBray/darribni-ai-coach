@@ -1,0 +1,8 @@
+#!/bin/sh
+# Blocks commits that contain secrets or private IDs.
+# Enable once per clone:  git config core.hooksPath .githooks
+python3 scripts/check_secrets.py || {
+  echo ""
+  echo "Commit blocked by the secret scan. Fix the files above, don't bypass with --no-verify."
+  exit 1
+}
