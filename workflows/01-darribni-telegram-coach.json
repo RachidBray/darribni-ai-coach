@@ -2,20 +2,20 @@
   "name": "Darribni - Telegram",
   "nodes": [
     {
+      "id": "974d0d20-27b6-4e17-9cfd-a8a7c9612242",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        688
+      ],
       "parameters": {
         "updates": [
           "message"
         ],
         "additionalFields": {}
       },
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        3280,
-        688
-      ],
-      "id": "e93b2e36-6a72-46f3-8cf6-ce6897ce5d34",
-      "name": "Telegram Trigger",
       "credentials": {
         "telegramApi": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -24,26 +24,274 @@
       }
     },
     {
-      "parameters": {
-        "model": "anthropic/claude-opus-4.6",
-        "options": {}
-      },
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
-      "typeVersion": 1,
+      "id": "af19750d-a991-423b-8314-437ad908c41f",
+      "name": "Route Message",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
       "position": [
-        3904,
-        880
+        3280,
+        688
       ],
-      "id": "9ff4af50-1102-4174-a227-abed3d0b9823",
-      "name": "OpenRouter Chat Model",
-      "credentials": {
-        "openRouterApi": {
-          "id": "YOUR_CREDENTIAL_ID",
-          "name": "OpenRouter account"
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ !!($json.message && $json.message.document) }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Plan File"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ ($json.message.text || \"\").trim().toLowerCase() }}",
+                    "rightValue": "/import",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/import"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Chat"
         }
       }
     },
     {
+      "id": "98e33867-8fa4-4dbd-88d6-f6a8d469a4c1",
+      "name": "Download Plan File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3488,
+        240
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.message.document.file_id }}",
+        "download": true,
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "f86d99eb-6da3-4b67-9ec7-e71354843936",
+      "name": "Is Zip File",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3712,
+        240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "z1",
+              "leftValue": "={{ ($('Telegram Trigger').item.json.message.document.file_name || '').toLowerCase() }}",
+              "rightValue": ".zip",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "29ad9196-49e5-4ad9-9ec2-c21739cc848c",
+      "name": "Unzip Calendar Export",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        3904,
+        160
+      ],
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "data",
+        "outputPrefix": "file_"
+      }
+    },
+    {
+      "id": "dcbb083c-5418-4fda-8a78-13125475177d",
+      "name": "Parse Calendar File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4120,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\nconst items = $input.all();\nconst texts = [];\nfor (let i = 0; i < items.length; i++) {\n  const bin = items[i].binary || {};\n  const keys = Object.keys(bin);\n  for (const key of keys) {\n    const name = String(bin[key].fileName || '').toLowerCase();\n    const mime = String(bin[key].mimeType || '').toLowerCase();\n    if (name.endsWith('.ics') || mime.includes('calendar') || keys.length === 1) {\n      const buf = await this.helpers.getBinaryDataBuffer(i, key);\n      texts.push(Buffer.from(buf.toString('latin1').replace(/\\r\\n/g, '\\n').replace(/\\n[ \\t]/g, ''), 'latin1').toString('utf8'));\n    }\n  }\n}\nconst unesc = v => v.replace(/\\\\n/gi, '\\n').replace(/\\\\,/g, ',').replace(/\\\\;/g, ';').replace(/\\\\\\\\/g, '\\\\');\nconst toDt = v => {\n  const m = String(v).match(/^(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  if (!m[4]) return { date: m[1] + '-' + m[2] + '-' + m[3] };\n  return { dateTime: m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6] + (m[7] ? 'Z' : '') };\n};\nconst today = new Date().toISOString().substring(0, 10);\nconst events = [];\nfor (const raw of texts) {\n  const text = raw.replace(/\\r\\n/g, '\\n').replace(/\\n[ \\t]/g, '');\n  const blocks = text.split('BEGIN:VEVENT').slice(1);\n  for (const b of blocks) {\n    const body = b.split('END:VEVENT')[0];\n    const ev = { status: 'confirmed' };\n    for (const line of body.split('\\n')) {\n      const idx = line.indexOf(':');\n      if (idx < 0) continue;\n      const key = line.substring(0, idx).split(';')[0].toUpperCase();\n      const val = line.substring(idx + 1);\n      if (key === 'SUMMARY') ev.summary = unesc(val);\n      else if (key === 'DESCRIPTION') ev.description = unesc(val);\n      else if (key === 'DTSTART') ev.start = toDt(val);\n      else if (key === 'DTEND') ev.end = toDt(val);\n      else if (key === 'UID') ev.id = val;\n      else if (key === 'STATUS') ev.status = val.toLowerCase();\n    }\n    if (!ev.start) continue;\n    const d = (ev.start.dateTime || ev.start.date).substring(0, 10);\n    if (d >= today && ev.status !== 'cancelled') events.push(ev);\n  }\n}\nevents.sort((a, b) => String(a.start.dateTime || a.start.date).localeCompare(String(b.start.dateTime || b.start.date)));\nreturn [{ json: { telegram_id: String(msg.from.id), chat_id: String(msg.chat.id), calendar_id: '', ics_events: events } }];\n"
+      }
+    },
+    {
+      "id": "ea27b127-c301-41d9-875d-77d0ca071c5e",
+      "name": "Execute Workflow (Import From File)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4340,
+        240
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECT_DARRIBNI_IMPORT_PLAN",
+          "mode": "list",
+          "cachedResultName": "Darribni - Import Plan"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "b327f631-7b52-468a-bfc7-b47e13b47ab3",
+      "name": "Prepare Import Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3488,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const m = $json.message || {};\nconst arg = String(m.text || '').trim().split(/\\s+/).slice(1).join(' ').trim();\nreturn { json: { telegram_id: String(m.from.id), chat_id: String(m.chat.id), calendar_id: arg.includes('@') ? arg : '' } };"
+      }
+    },
+    {
+      "id": "11870b39-b44d-4bbe-b722-29b0cf7c9e8f",
+      "name": "Execute Workflow (Import Plan)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3712,
+        480
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECT_DARRIBNI_IMPORT_PLAN",
+          "mode": "list",
+          "cachedResultName": "Darribni - Import Plan"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "4dae9e44-9a24-4f09-b6f8-f8e16caa5de3",
+      "name": "Execute a SQL query (Fetch Data)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3488,
+        688
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH athlete_data AS (\n    SELECT * FROM athletes WHERE telegram_id = '{{ $json.message.from.id }}' LIMIT 1\n),\ngoal_data AS (\n    SELECT * FROM goals WHERE athlete_id = (SELECT id FROM athlete_data) AND status = 'Active' LIMIT 1\n),\nrecent_activities AS (\n    SELECT sport_type, summary_metrics, start_date \n    FROM activities \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND start_date > NOW() - INTERVAL '7 days'\n),\nrecent_workouts AS (\n    SELECT scheduled_date, sport_type, title, description, status \n    FROM workouts \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND scheduled_date > NOW() - INTERVAL '7 days' AND scheduled_date <= NOW() + INTERVAL '14 days'\n    ORDER BY scheduled_date\n),\nchat_history AS (\n    SELECT role, content \n    FROM conversations \n    WHERE athlete_id = (SELECT id FROM athlete_data) \n    ORDER BY timestamp DESC LIMIT 10\n)\nSELECT \n    row_to_json(a.*) as athlete,\n    row_to_json(g.*) as active_goal,\n    (SELECT json_agg(row_to_json(ra.*)) FROM recent_activities ra) as activities,\n    (SELECT json_agg(row_to_json(rw.*)) FROM recent_workouts rw) as workouts,\n    (SELECT json_agg(row_to_json(ch.*)) FROM chat_history ch) as history\nFROM athlete_data a\nLEFT JOIN goal_data g ON true;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "9738d026-0c33-45af-8caf-1f1b2df034ed",
+      "name": "Code Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        688
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst userMessage = $('Telegram Trigger').item.json.message.text;\n\n// Format the History\nlet historyText = \"\";\nif (data.history) {\n    data.history.reverse().forEach(msg => {\n        historyText += `${msg.role.toUpperCase()}: ${msg.content}\\n`;\n    });\n}\n\n// Build the System Prompt\nconst systemPrompt = `You are an elite endurance coach.\nToday's date: ${new Date().toISOString().split('T')[0]}\n\n### ATHLETE PROFILE\nMetrics: ${JSON.stringify(data.athlete.metrics || {})}\nCoach Notes: ${data.athlete.coach_notes || 'None'}\n\n### CURRENT STATE\nActive Goal: ${data.active_goal ? data.active_goal.description : 'No active goal set.'}\n\n### RECENT CONTEXT\nCompleted Activities (last 7 days): ${JSON.stringify(data.activities || [])}\nPlanned Workouts (last 7 days + next 14 days, from the athlete's own training plan): ${JSON.stringify(data.workouts || [])}\n\n### INSTRUCTIONS\nCRITICAL RULES:\n1. Keep your conversational response extremely short and concise (under 150 words). Do not write long essays.\n2. The athlete follows his own training plan (the Planned Workouts above). Coach him on that plan. Do NOT generate new workouts unless he explicitly asks you to add, change or replace sessions.\n3. If you generate workouts, ONLY generate for the immediate next 7 days. Never generate weeks in advance.\n4. If you output JSON, you MUST wrap it strictly in \\`\\`\\`json markdown blocks with exact keys!\n5. If he says he changed his plan but did not attach a file, tell him to send the calendar export file (.zip or .ics from Google Calendar > Settings > Export) right here in the chat.\n\nIf you need to generate new workouts, output EXACTLY this format:\n\\`\\`\\`json\n{\"new_workouts\": [{\"scheduled_date\": \"YYYY-MM-DD\", \"sport_type\": \"Run\", \"description\": \"...\", \"target_duration_mins\": 45}]}\n\\`\\`\\`\n\nIf you need to remember a constraint, output EXACTLY this format:\n\\`\\`\\`json\n{\"update_coach_notes\": \"...\"}\n\\`\\`\\`\n\n### HISTORY\n${historyText}`;\n\nreturn {\n    systemPrompt: systemPrompt,\n    userMessage: userMessage,\n    athleteId: data.athlete.id\n};\n"
+      }
+    },
+    {
+      "id": "1eec11f5-c9ce-4ab2-9781-e460e1063407",
+      "name": "Basic LLM Chain (Call AI)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        3904,
+        688
+      ],
       "parameters": {
         "promptType": "define",
         "text": "={{ $json.userMessage }}",
@@ -55,43 +303,59 @@
           ]
         },
         "batching": {}
-      },
-      "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.9,
-      "position": [
-        3904,
-        688
-      ],
-      "id": "34185273-b3cc-465d-a945-7774ecae525c",
-      "name": "Basic LLM Chain (Call AI)"
+      }
     },
     {
+      "id": "c5cda729-f01a-4f87-b843-3238930d59f3",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3904,
+        880
+      ],
       "parameters": {
-        "jsCode": "const aiResponse = $input.first().json.text;\nlet replyText = aiResponse;\nlet newWorkouts = null;\nlet newCoachNotes = null;\n\nconst jsonRegex = /```(?:json)?\\s*([\\s\\S]*?)\\s*```/g;\nlet match;\nlet foundBlock = false;\n\nwhile ((match = jsonRegex.exec(aiResponse)) !== null) {\n    foundBlock = true;\n    try {\n        const parsed = JSON.parse(match[1]);\n        if (parsed.new_workouts) {\n            newWorkouts = parsed.new_workouts;\n            replyText = replyText.replace(match[0], '');\n        }\n        if (parsed.update_coach_notes) {\n            newCoachNotes = parsed.update_coach_notes;\n            replyText = replyText.replace(match[0], '');\n        }\n    } catch (e) {}\n}\n\nif (!foundBlock) {\n    let fallbackMatch = aiResponse.match(/(\\{[\\s\\S]*\"(?:new_workouts|update_coach_notes)\"[\\s\\S]*\\})/);\n    if (fallbackMatch) {\n        try {\n            const parsed = JSON.parse(fallbackMatch[1]);\n            if (parsed.new_workouts) {\n                newWorkouts = parsed.new_workouts;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n            if (parsed.update_coach_notes) {\n                newCoachNotes = parsed.update_coach_notes;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n        } catch (e) {}\n    }\n}\n\nlet finalReply = replyText.trim();\nif (finalReply.length > 4000) {\n    finalReply = finalReply.substring(0, 4000) + '\\n\\n...[Message truncated by AI Coach]';\n}\n\nreturn {\n    replyText: finalReply,\n    newWorkouts: newWorkouts,\n    newCoachNotes: newCoachNotes,\n    athleteId: $('Code Prepare Prompt').item.json.athleteId,\n    userMessage: $('Code Prepare Prompt').item.json.userMessage\n};"
+        "model": "anthropic/claude-opus-4.6",
+        "options": {}
       },
+      "credentials": {
+        "openRouterApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "id": "ba9620e5-c399-43a2-9e85-67d05173d613",
+      "name": "Code in JavaScript (Parse AI)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         4256,
         688
       ],
-      "id": "55959199-2b21-441b-b0bf-77517216e3f7",
-      "name": "Code in JavaScript (Parse AI)"
+      "parameters": {
+        "jsCode": "const aiResponse = $input.first().json.text;\nlet replyText = aiResponse;\nlet newWorkouts = null;\nlet newCoachNotes = null;\n\nconst jsonRegex = /```(?:json)?\\s*([\\s\\S]*?)\\s*```/g;\nlet match;\nlet foundBlock = false;\n\nwhile ((match = jsonRegex.exec(aiResponse)) !== null) {\n    foundBlock = true;\n    try {\n        const parsed = JSON.parse(match[1]);\n        if (parsed.new_workouts) {\n            newWorkouts = parsed.new_workouts;\n            replyText = replyText.replace(match[0], '');\n        }\n        if (parsed.update_coach_notes) {\n            newCoachNotes = parsed.update_coach_notes;\n            replyText = replyText.replace(match[0], '');\n        }\n    } catch (e) {}\n}\n\nif (!foundBlock) {\n    let fallbackMatch = aiResponse.match(/(\\{[\\s\\S]*\"(?:new_workouts|update_coach_notes)\"[\\s\\S]*\\})/);\n    if (fallbackMatch) {\n        try {\n            const parsed = JSON.parse(fallbackMatch[1]);\n            if (parsed.new_workouts) {\n                newWorkouts = parsed.new_workouts;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n            if (parsed.update_coach_notes) {\n                newCoachNotes = parsed.update_coach_notes;\n                replyText = replyText.replace(fallbackMatch[0], '');\n            }\n        } catch (e) {}\n    }\n}\n\nlet finalReply = replyText.trim();\nif (finalReply.length > 4000) {\n    finalReply = finalReply.substring(0, 4000) + '\\n\\n...[Message truncated by AI Coach]';\n}\n\nreturn {\n    replyText: finalReply,\n    newWorkouts: newWorkouts,\n    newCoachNotes: newCoachNotes,\n    athleteId: $('Code Prepare Prompt').item.json.athleteId,\n    userMessage: $('Code Prepare Prompt').item.json.userMessage\n};"
+      }
     },
     {
-      "parameters": {
-        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
-        "text": "={{ $json.replyText }}",
-        "additionalFields": {}
-      },
+      "id": "aad6608e-d8c3-4b18-b5f6-752bb8945dce",
+      "name": "Send a text message (Reply to Telegram)",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
         4464,
         688
       ],
-      "id": "cbd1bb93-fc65-459a-b65d-37e03acd082e",
-      "name": "Send a text message (Reply to Telegram)",
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
       "credentials": {
         "telegramApi": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -100,53 +364,19 @@
       }
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO conversations (athlete_id, role, content) VALUES\n('{{ $json.athleteId }}', 'user', $$ {{ $json.userMessage }} $$),\n('{{ $json.athleteId }}', 'coach', $$ {{ $json.replyText }} $$);",
-        "options": {}
-      },
+      "id": "01b2d15e-1bd2-4fec-9734-7c244bb61ffe",
+      "name": "Execute a SQL query (Save History)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
         4464,
         496
       ],
-      "id": "d1f04140-a281-4663-9459-e680e5c489d9",
-      "name": "Execute a SQL query (Save History)",
-      "credentials": {
-        "postgres": {
-          "id": "YOUR_CREDENTIAL_ID",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst userMessage = $('Telegram Trigger').item.json.message.text;\n\n// Format the History\nlet historyText = \"\";\nif (data.history) {\n    data.history.reverse().forEach(msg => {\n        historyText += `${msg.role.toUpperCase()}: ${msg.content}\\n`;\n    });\n}\n\n// Build the System Prompt\nconst systemPrompt = `You are an elite endurance coach.\n\n### ATHLETE PROFILE\nMetrics: ${JSON.stringify(data.athlete.metrics || {})}\nCoach Notes: ${data.athlete.coach_notes || 'None'}\n\n### CURRENT STATE\nActive Goal: ${data.active_goal ? data.active_goal.description : 'No active goal set.'}\n\n### RECENT CONTEXT\nCompleted Activities: ${JSON.stringify(data.activities || [])}\nPlanned Workouts: ${JSON.stringify(data.workouts || [])}\n\n### INSTRUCTIONS\nCRITICAL RULES:\n1. Keep your conversational response extremely short and concise (under 150 words). Do not write long essays.\n2. If you generate workouts, ONLY generate for the immediate next 7 days. Never generate weeks in advance.\n3. If you output JSON, you MUST wrap it strictly in \\`\\`\\`json markdown blocks with exact keys!\n\nIf you need to generate new workouts, output EXACTLY this format:\n\\`\\`\\`json\n{\"new_workouts\": [{\"scheduled_date\": \"YYYY-MM-DD\", \"sport_type\": \"Run\", \"description\": \"...\", \"target_duration_mins\": 45}]}\n\\`\\`\\`\n\nIf you need to remember a constraint, output EXACTLY this format:\n\\`\\`\\`json\n{\"update_coach_notes\": \"...\"}\n\\`\\`\\`\n\n### HISTORY\n${historyText}`;\n\nreturn {\n    systemPrompt: systemPrompt,\n    userMessage: userMessage,\n    athleteId: data.athlete.id\n};\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3712,
-        688
-      ],
-      "id": "e5cd67da-7d60-4d09-9bf8-30907685c131",
-      "name": "Code Prepare Prompt"
-    },
-    {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH athlete_data AS (\n    SELECT * FROM athletes WHERE telegram_id = '{{ $json.message.from.id }}' LIMIT 1\n),\ngoal_data AS (\n    SELECT * FROM goals WHERE athlete_id = (SELECT id FROM athlete_data) AND status = 'Active' LIMIT 1\n),\nrecent_activities AS (\n    SELECT sport_type, summary_metrics, start_date \n    FROM activities \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND start_date > NOW() - INTERVAL '7 days'\n),\nrecent_workouts AS (\n    SELECT scheduled_date, sport_type, description, status \n    FROM workouts \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND scheduled_date > NOW() - INTERVAL '7 days'\n),\nchat_history AS (\n    SELECT role, content \n    FROM conversations \n    WHERE athlete_id = (SELECT id FROM athlete_data) \n    ORDER BY timestamp DESC LIMIT 10\n)\nSELECT \n    row_to_json(a.*) as athlete,\n    row_to_json(g.*) as active_goal,\n    (SELECT json_agg(row_to_json(ra.*)) FROM recent_activities ra) as activities,\n    (SELECT json_agg(row_to_json(rw.*)) FROM recent_workouts rw) as workouts,\n    (SELECT json_agg(row_to_json(ch.*)) FROM chat_history ch) as history\nFROM athlete_data a\nLEFT JOIN goal_data g ON true;",
+        "query": "=INSERT INTO conversations (athlete_id, role, content) VALUES\n('{{ $json.athleteId }}', 'user', $$ {{ $json.userMessage }} $$),\n('{{ $json.athleteId }}', 'coach', $$ {{ $json.replyText }} $$);",
         "options": {}
       },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        3488,
-        688
-      ],
-      "id": "d6c4a4c2-7ece-4372-a0c1-1863e3821a1b",
-      "name": "Execute a SQL query (Fetch Data)",
       "credentials": {
         "postgres": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -155,32 +385,32 @@
       }
     },
     {
-      "parameters": {
-        "jsCode": "const workouts = $input.first().json.newWorkouts;\nconst athleteId = $input.first().json.athleteId;\n\nif (!workouts || workouts.length === 0) return [];\n\nreturn workouts.map(workout => {\n    return {\n        json: {\n            athleteId: athleteId,\n            scheduled_date: workout.scheduled_date || workout.scheduleddate || new Date().toISOString().split('T')[0],\n            sport_type: workout.sport_type || workout.sporttype || 'Run',\n            title: workout.title || workout.sport_type || workout.sporttype || 'Workout',\n            description: workout.description || 'Workout planned by AI Coach',\n            target_duration_mins: workout.target_duration_mins || workout.targetdurationmins || 60\n        }\n    };\n});"
-      },
+      "id": "d7e33909-55d1-4528-84d7-669ed5c7ab7a",
+      "name": "Code Split Workouts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         4256,
         912
       ],
-      "id": "b9da8b02-57c6-4526-9b6c-fd3afd37814a",
-      "name": "Code Split Workouts"
+      "parameters": {
+        "jsCode": "const workouts = $input.first().json.newWorkouts;\nconst athleteId = $input.first().json.athleteId;\n\nif (!workouts || workouts.length === 0) return [];\n\nreturn workouts.map(workout => {\n    return {\n        json: {\n            athleteId: athleteId,\n            scheduled_date: workout.scheduled_date || workout.scheduleddate || new Date().toISOString().split('T')[0],\n            sport_type: workout.sport_type || workout.sporttype || 'Run',\n            title: workout.title || workout.sport_type || workout.sporttype || 'Workout',\n            description: workout.description || 'Workout planned by AI Coach',\n            target_duration_mins: workout.target_duration_mins || workout.targetdurationmins || 60\n        }\n    };\n});"
+      }
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO workouts (athlete_id, scheduled_date, sport_type, title, description, target_duration_mins)\nVALUES (\n    '{{ $json.athleteId }}',\n    '{{ $json.scheduled_date }}',\n    '{{ $json.sport_type }}',\n    '{{ $json.title }}',\n    $$ {{ $json.description }} $$,\n    {{ $json.target_duration_mins }}\n)\nRETURNING id AS workout_db_id, athlete_id, scheduled_date, sport_type, title, description, target_duration_mins;",
-        "options": {}
-      },
+      "id": "c2f30d09-46e5-4165-8bda-0fa235fcee4b",
+      "name": "Postgres (Save Workouts)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
         4256,
         1120
       ],
-      "id": "002045f3-796d-41b6-a00f-66ca96478501",
-      "name": "Postgres (Save Workouts)",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO workouts (athlete_id, scheduled_date, sport_type, title, description, target_duration_mins)\nVALUES (\n    '{{ $json.athleteId }}',\n    '{{ $json.scheduled_date }}',\n    '{{ $json.sport_type }}',\n    '{{ $json.title }}',\n    $$ {{ $json.description }} $$,\n    {{ $json.target_duration_mins }}\n)\nRETURNING id AS workout_db_id, athlete_id, scheduled_date, sport_type, title, description, target_duration_mins;",
+        "options": {}
+      },
       "credentials": {
         "postgres": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -189,10 +419,18 @@
       }
     },
     {
+      "id": "58c72a47-6d5b-45a2-8d9b-65940882dde4",
+      "name": "Execute Workflow (Sync to Calendar)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4464,
+        1120
+      ],
       "parameters": {
         "workflowId": {
           "__rl": true,
-          "value": "SELECT_DARRIBNI__GOOGLE_CALENDAR_SYNC",
+          "value": "SELECT_DARRIBNI_GOOGLE_CALENDAR_SYNC",
           "mode": "list",
           "cachedResultName": "Darribni - Google Calendar Sync"
         },
@@ -207,15 +445,7 @@
         "options": {
           "waitForSubWorkflow": true
         }
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        4464,
-        1120
-      ],
-      "id": "217ec5a9-5d4b-4332-995d-a1a8c50e7844",
-      "name": "Execute Workflow (Sync to Calendar)"
+      }
     }
   ],
   "connections": {
@@ -223,7 +453,127 @@
       "main": [
         [
           {
+            "node": "Route Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Message": {
+      "main": [
+        [
+          {
+            "node": "Download Plan File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Import Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Execute a SQL query (Fetch Data)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Plan File": {
+      "main": [
+        [
+          {
+            "node": "Is Zip File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Zip File": {
+      "main": [
+        [
+          {
+            "node": "Unzip Calendar Export",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Calendar File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unzip Calendar Export": {
+      "main": [
+        [
+          {
+            "node": "Parse Calendar File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Calendar File": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow (Import From File)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Import Request": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow (Import Plan)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query (Fetch Data)": {
+      "main": [
+        [
+          {
+            "node": "Code Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain (Call AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain (Call AI)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript (Parse AI)",
             "type": "main",
             "index": 0
           }
@@ -236,17 +586,6 @@
           {
             "node": "Basic LLM Chain (Call AI)",
             "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Basic LLM Chain (Call AI)": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript (Parse AI)",
-            "type": "main",
             "index": 0
           }
         ]
@@ -267,28 +606,6 @@
           },
           {
             "node": "Code Split Workouts",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code Prepare Prompt": {
-      "main": [
-        [
-          {
-            "node": "Basic LLM Chain (Call AI)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Execute a SQL query (Fetch Data)": {
-      "main": [
-        [
-          {
-            "node": "Code Prepare Prompt",
             "type": "main",
             "index": 0
           }

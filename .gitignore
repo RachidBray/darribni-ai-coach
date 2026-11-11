@@ -1,0 +1,24 @@
+# Secrets and local config (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*.json
+
+# Raw n8n exports (sanitize into workflows/ instead)
+exports/
+*.export.json
+
+# Personal training data
+*.ics
+plans/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+node_modules/
+__pycache__/

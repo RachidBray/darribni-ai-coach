@@ -2,6 +2,14 @@
   "name": "Darribni - Strava",
   "nodes": [
     {
+      "id": "aef933b9-9706-4985-b516-c33114a887f9",
+      "name": "Strava Trigger",
+      "type": "n8n-nodes-base.stravaTrigger",
+      "typeVersion": 1,
+      "position": [
+        1456,
+        432
+      ],
       "parameters": {
         "object": "activity",
         "event": "create",
@@ -9,14 +17,6 @@
           "deleteIfExist": true
         }
       },
-      "type": "n8n-nodes-base.stravaTrigger",
-      "typeVersion": 1,
-      "position": [
-        1456,
-        432
-      ],
-      "id": "cb596ba0-1b0a-45ea-8abe-7dad47890b24",
-      "name": "Strava Trigger",
       "credentials": {
         "stravaOAuth2Api": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -25,18 +25,18 @@
       }
     },
     {
-      "parameters": {
-        "operation": "get",
-        "activityId": "={{ $('Strava Trigger').item.json.object_id }}"
-      },
+      "id": "ca6ac2d2-78fd-4a17-abfe-d774159bfa99",
+      "name": "Get an activity",
       "type": "n8n-nodes-base.strava",
       "typeVersion": 1.1,
       "position": [
         1664,
         432
       ],
-      "id": "dccbce36-e766-4dca-8731-8b1ff1bef5b3",
-      "name": "Get an activity",
+      "parameters": {
+        "operation": "get",
+        "activityId": "={{ $('Strava Trigger').item.json.object_id }}"
+      },
       "credentials": {
         "stravaOAuth2Api": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -45,19 +45,19 @@
       }
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO activities (strava_activity_id, athlete_id, start_date, sport_type, summary_metrics)\nVALUES (\n  '{{ $json.id }}',\n  (SELECT id FROM athletes WHERE strava_id = '{{ $json.athlete.id }}' LIMIT 1),\n  '{{ $json.start_date }}',\n  '{{ $json.type }}',\n  jsonb_build_object(\n    'distance_m', {{ $json.distance }},\n    'time_s',     {{ $json.moving_time }},\n    'avg_hr',     {{ $json.average_heartrate ?? 'null' }}\n  )\n)\nON CONFLICT (strava_activity_id) DO UPDATE SET summary_metrics = EXCLUDED.summary_metrics\nRETURNING id;",
-        "options": {}
-      },
+      "id": "d8fa2a92-6ead-489a-aec2-bfb22c876c15",
+      "name": "Postgres Node (Save Activity)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
         1872,
         432
       ],
-      "id": "7b687ce2-befe-42a5-864c-958b71b34ccf",
-      "name": "Postgres Node (Save Activity)",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO activities (strava_activity_id, athlete_id, start_date, sport_type, summary_metrics)\nVALUES (\n  '{{ $json.id }}',\n  (SELECT id FROM athletes WHERE strava_id = '{{ $json.athlete.id }}' LIMIT 1),\n  '{{ $json.start_date }}',\n  '{{ $json.type }}',\n  jsonb_build_object(\n    'distance_m', {{ $json.distance }},\n    'time_s',     {{ $json.moving_time }},\n    'avg_hr',     {{ $json.average_heartrate ?? 'null' }}\n  )\n)\nON CONFLICT (strava_activity_id) DO UPDATE SET summary_metrics = EXCLUDED.summary_metrics\nRETURNING id;",
+        "options": {}
+      },
       "credentials": {
         "postgres": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -66,6 +66,48 @@
       }
     },
     {
+      "id": "2aeba76c-3b1a-4889-8e83-ab61a15c4930",
+      "name": "Postgres Fetch Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2080,
+        432
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH athlete_data AS (\n    SELECT id, coach_notes, telegram_id FROM athletes WHERE strava_id = '{{ $('Strava Trigger').item.json.owner_id }}' LIMIT 1\n),\ntoday_plan AS (\n    SELECT sport_type, description, target_duration_mins \n    FROM workouts \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND scheduled_date = CURRENT_DATE\n)\nSELECT \n    (SELECT json_agg(row_to_json(tp.*)) FROM today_plan tp) as planned_today,\n    coach_notes,\n    telegram_id\nFROM athlete_data;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "29dcf41b-ee62-49ae-b701-2aa38c36152b",
+      "name": "Code Prepare Analysis Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        432
+      ],
+      "parameters": {
+        "jsCode": "const context = $input.first().json;\nconst activity = $('Get an activity').item.json;\n\nconst prompt = `You are an elite endurance coach.\nYour athlete just completed a new activity on Strava.\n\n### ACTIVITY DETAILS\nSport: ${activity.type}\nDistance: ${(activity.distance / 1000).toFixed(2)} km\nTime: ${Math.round(activity.moving_time / 60)} mins\nAvg HR: ${activity.average_heartrate || 'N/A'} bpm\n\n### WHAT WAS PLANNED FOR TODAY\n${JSON.stringify(context.planned_today || \"Nothing planned for today.\")}\n\n### COACH NOTES\n${context.coach_notes}\n\n### INSTRUCTIONS\nAnalyze this activity. Did they follow the plan? Did they go too hard? \nWrite a short, encouraging message to the athlete directly (2-3 sentences max).`;\n\nreturn {\n    systemPrompt: prompt,\n    telegramId: context.telegram_id\n};"
+      }
+    },
+    {
+      "id": "a986bda2-e95a-4cd3-b5b7-50e4dd5f24ba",
+      "name": "Basic LLM Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        2480,
+        432
+      ],
       "parameters": {
         "promptType": "define",
         "text": "I just finished a workout. Please analyze.",
@@ -77,84 +119,21 @@
           ]
         },
         "batching": {}
-      },
-      "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.9,
-      "position": [
-        2480,
-        432
-      ],
-      "id": "2d11b29d-9609-4de6-9bfb-d3f0209c4d32",
-      "name": "Basic LLM Chain"
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Postgres Fetch Context').item.json.telegram_id }}",
-        "text": "={{ $json.text.substring(0, 4000) }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2800,
-        432
-      ],
-      "id": "5369cacd-8d73-45c5-8ff4-14b5323b1c0c",
-      "name": "Send a text message",
-      "credentials": {
-        "telegramApi": {
-          "id": "YOUR_CREDENTIAL_ID",
-          "name": "Telegram account"
-        }
       }
     },
     {
-      "parameters": {
-        "jsCode": "const context = $input.first().json;\nconst activity = $('Get an activity').item.json;\n\nconst prompt = `You are an elite endurance coach.\nYour athlete just completed a new activity on Strava.\n\n### ACTIVITY DETAILS\nSport: ${activity.type}\nDistance: ${(activity.distance / 1000).toFixed(2)} km\nTime: ${Math.round(activity.moving_time / 60)} mins\nAvg HR: ${activity.average_heartrate || 'N/A'} bpm\n\n### WHAT WAS PLANNED FOR TODAY\n${JSON.stringify(context.planned_today || \"Nothing planned for today.\")}\n\n### COACH NOTES\n${context.coach_notes}\n\n### INSTRUCTIONS\nAnalyze this activity. Did they follow the plan? Did they go too hard? \nWrite a short, encouraging message to the athlete directly (2-3 sentences max).`;\n\nreturn {\n    systemPrompt: prompt,\n    telegramId: context.telegram_id\n};"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2288,
-        432
-      ],
-      "id": "8d185edd-b223-4a12-949a-d7817d017d66",
-      "name": "Code Prepare Analysis Prompt"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "WITH athlete_data AS (\n    SELECT id, coach_notes, telegram_id FROM athletes WHERE strava_id = '{{ $('Strava Trigger').item.json.owner_id }}' LIMIT 1\n),\ntoday_plan AS (\n    SELECT sport_type, description, target_duration_mins \n    FROM workouts \n    WHERE athlete_id = (SELECT id FROM athlete_data) AND scheduled_date = CURRENT_DATE\n)\nSELECT \n    (SELECT json_agg(row_to_json(tp.*)) FROM today_plan tp) as planned_today,\n    coach_notes,\n    telegram_id\nFROM athlete_data;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2080,
-        432
-      ],
-      "id": "77d4d5ff-242a-4136-a17e-1823cebded84",
-      "name": "Postgres Fetch Context",
-      "credentials": {
-        "postgres": {
-          "id": "YOUR_CREDENTIAL_ID",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "model": "moonshotai/kimi-k2.6",
-        "options": {}
-      },
+      "id": "098c2e2d-fb81-4a00-8aa9-71d3cdee09fc",
+      "name": "OpenRouter Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
       "position": [
         2480,
         624
       ],
-      "id": "879828dd-4aef-4391-be2b-8f4d4c5f0273",
-      "name": "OpenRouter Chat Model",
+      "parameters": {
+        "model": "moonshotai/kimi-k2.6",
+        "options": {}
+      },
       "credentials": {
         "openRouterApi": {
           "id": "YOUR_CREDENTIAL_ID",
@@ -163,6 +142,39 @@
       }
     },
     {
+      "id": "db6f2054-8d4f-4ab8-b167-a002c6dc9a83",
+      "name": "Send a text message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2800,
+        432
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Postgres Fetch Context').item.json.telegram_id }}",
+        "text": "={{ $json.text.substring(0, 4000) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "ec8d6a24-d85d-4033-bb0a-c758f8301d75",
+      "name": "Call 'Strava Social Manager'",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1776,
+        688
+      ],
       "parameters": {
         "workflowId": {
           "__rl": true,
@@ -181,15 +193,7 @@
         "options": {
           "waitForSubWorkflow": false
         }
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        1776,
-        688
-      ],
-      "id": "1a857721-efbf-4dd1-ae7c-b1916702c764",
-      "name": "Call 'Strava Social Manager'"
+      }
     }
   ],
   "connections": {
@@ -231,11 +235,11 @@
         ]
       ]
     },
-    "Basic LLM Chain": {
+    "Postgres Fetch Context": {
       "main": [
         [
           {
-            "node": "Send a text message",
+            "node": "Code Prepare Analysis Prompt",
             "type": "main",
             "index": 0
           }
@@ -253,11 +257,11 @@
         ]
       ]
     },
-    "Postgres Fetch Context": {
+    "Basic LLM Chain": {
       "main": [
         [
           {
-            "node": "Code Prepare Analysis Prompt",
+            "node": "Send a text message",
             "type": "main",
             "index": 0
           }

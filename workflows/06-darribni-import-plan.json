@@ -1,0 +1,316 @@
+{
+  "name": "Darribni - Import Plan",
+  "nodes": [
+    {
+      "id": "0a2b33c9-84dc-4836-a1e9-040490b71d80",
+      "name": "When Called (Import Plan)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "75caa6a2-ec57-4adc-ac0b-f6c7417d3efa",
+      "name": "Has Events From File",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        360,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f1",
+              "leftValue": "={{ Array.isArray($json.ics_events) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "1fbd4a5c-931d-4122-9a14-b717fc31c541",
+      "name": "Map Events to Workouts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "let trig = {};\ntry { trig = $('When Called (Import Plan)').first().json || {}; } catch (err) { trig = {}; }\nconst src = Array.isArray(trig.ics_events) ? trig.ics_events : $input.all().map(i => i.json);\nconst events = src.filter(e => e && e.status !== 'cancelled' && e.start);\nconst sportOf = (s) => {\n  if (s.startsWith('🚴')) return 'Ride';\n  if (s.startsWith('🏃')) return 'Run';\n  if (s.startsWith('🏋') || s.startsWith('💪') || s.startsWith('🧘')) return 'Strength';\n  if (s.startsWith('🏁')) return /MTB|XC|ride|bike|trainer/i.test(s) ? 'Ride' : 'Run';\n  if (/rest/i.test(s)) return 'Rest';\n  return 'Other';\n};\nconst workouts = events.map(e => {\n  const s = e.summary || 'Workout';\n  const d = e.description || '';\n  const startIso = e.start.dateTime || e.start.date;\n  const endIso = (e.end && (e.end.dateTime || e.end.date)) || startIso;\n  const dur = d.match(/Planned Duration:\\s*([\\d.]+)\\s*min/i);\n  let mins = dur ? Math.round(parseFloat(dur[1])) : Math.round((new Date(endIso) - new Date(startIso)) / 60000);\n  if (!mins || mins < 0 || mins > 600) mins = 60;\n  const title = s.replace(/^[^\\p{L}\\p{N}]+/u, '').trim().substring(0, 150);\n  return {\n    scheduled_date: String(startIso).substring(0, 10),\n    sport_type: sportOf(s),\n    title: title || 'Workout',\n    description: (s + (d ? '\\n\\n' + d : '')).substring(0, 4000),\n    target_duration_mins: mins\n  };\n});\nreturn [{ json: {\n  telegram_id: trig.telegram_id ? String(trig.telegram_id) : '',\n  chat_id: trig.chat_id ? String(trig.chat_id) : '',\n  count: workouts.length,\n  first_date: workouts.length ? workouts[0].scheduled_date : null,\n  last_date: workouts.length ? workouts[workouts.length - 1].scheduled_date : null,\n  workouts_json: JSON.stringify(workouts)\n} }];"
+      }
+    },
+    {
+      "id": "8b1d16de-6f99-4a91-bdb5-020c1ea170ff",
+      "name": "Read New Plan Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.calendar_id || 'YOUR_PLAN_CALENDAR_ID@group.calendar.google.com' }}"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $today.toISO() }}",
+        "timeMax": "={{ $today.plus({ days: 180 }).toISO() }}",
+        "options": {
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "3ca8d0ff-13f2-4f47-ab88-9def7cf501fe",
+      "name": "Replace Future Workouts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (\n  SELECT id, telegram_id FROM athletes WHERE ($1 = '' OR telegram_id::text = $1) ORDER BY id LIMIT 1\n),\nnew_rows AS (\n  SELECT * FROM json_to_recordset($2::json) AS x(scheduled_date date, sport_type text, title text, description text, target_duration_mins int)\n),\nold AS (\n  DELETE FROM workouts\n  WHERE athlete_id = (SELECT id FROM a) AND scheduled_date >= CURRENT_DATE AND (SELECT count(*) FROM new_rows) > 0\n  RETURNING gcal_event_id\n),\nins AS (\n  INSERT INTO workouts (athlete_id, scheduled_date, sport_type, title, description, target_duration_mins)\n  SELECT (SELECT id FROM a), scheduled_date, sport_type, title, description, target_duration_mins FROM new_rows\n  RETURNING id\n)\nSELECT\n  (SELECT telegram_id::text FROM a) AS telegram_id,\n  (SELECT count(*) FROM ins) AS inserted,\n  (SELECT count(*) FROM old) AS removed,\n  COALESCE((SELECT json_agg(gcal_event_id) FROM old WHERE gcal_event_id IS NOT NULL AND gcal_event_id <> ''), '[]'::json) AS old_gcal_ids;",
+        "options": {
+          "queryReplacement": "={{ [ $json.telegram_id || \"\", $json.workouts_json ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "b6d74541-65d4-4d5d-a57e-15166f96acd2",
+      "name": "List Old Darribni Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ids = $input.first().json.old_gcal_ids || [];\nreturn ids.map(id => ({ json: { gcal_event_id: id } }));"
+      }
+    },
+    {
+      "id": "fe52a2ac-1b1a-4a46-9c52-de8f393cc414",
+      "name": "Delete Old Plan Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "resource": "event",
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_DARRIBNI_CALENDAR_ID@group.calendar.google.com"
+        },
+        "eventId": "={{ $json.gcal_event_id }}",
+        "options": {
+          "sendUpdates": "none"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "47c7c0ca-526c-4d39-a6b6-5706bf2be054",
+      "name": "Confirm Import on Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        420
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Map Events to Workouts').first().json.chat_id || $json.telegram_id }}",
+        "text": "={{ $json.inserted > 0 ? '✅ New plan loaded: ' + $json.inserted + ' sessions from ' + $('Map Events to Workouts').first().json.first_date + ' to ' + $('Map Events to Workouts').first().json.last_date + '. Old plan cleared (' + $json.removed + ' sessions). Coaching you off this one from now on.' : '⚠️ I could not find any upcoming sessions in that, so your current plan is unchanged. Send the .zip or .ics you get from Google Calendar > Settings > Export.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "fad3ec73-5576-4fc9-85b8-8e7f3785134d",
+      "name": "Run Import Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        500
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "87ff342b-5342-4a60-8ce0-cc57947523f5",
+      "name": "Sticky Note 87ff342b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        208
+      ],
+      "parameters": {
+        "content": "## Import Plan\nReads the training plan calendar (default: الطريق إلى المراطون), replaces all workouts from today onward in Postgres, and removes the old plan events from the Darribni calendar. Called from Telegram: send the exported calendar file (.zip/.ics) or /import to read the Google Calendar directly.",
+        "color": 4,
+        "width": 880,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "When Called (Import Plan)": {
+      "main": [
+        [
+          {
+            "node": "Has Events From File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events From File": {
+      "main": [
+        [
+          {
+            "node": "Map Events to Workouts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read New Plan Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Events to Workouts": {
+      "main": [
+        [
+          {
+            "node": "Replace Future Workouts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read New Plan Calendar": {
+      "main": [
+        [
+          {
+            "node": "Map Events to Workouts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Future Workouts": {
+      "main": [
+        [
+          {
+            "node": "List Old Darribni Events",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Confirm Import on Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Old Darribni Events": {
+      "main": [
+        [
+          {
+            "node": "Delete Old Plan Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Import Manually": {
+      "main": [
+        [
+          {
+            "node": "Read New Plan Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

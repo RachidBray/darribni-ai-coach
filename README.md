@@ -36,10 +36,13 @@ Example: "My knee feels off, can we go easy this week?" leads to a short reply a
 ### 2. Instant workout review (Strava)
 The moment a new activity lands on Strava, Darribni saves it, compares it with what was planned for that day, and sends me a 2 to 3 sentence review on Telegram. Did I follow the plan? Did I go too hard?
 
-### 3. Weekly plan (every Sunday at 6pm)
-Every Sunday evening it looks at my past week's volume per sport and the current phase of my training strategy, then generates Monday to Sunday sessions, saves them, syncs them to Google Calendar, and sends me a short summary.
+### 3. Load my own plan from a calendar file
+When I change my training plan, I export the calendar from Google Calendar (Settings > Export) and send the `.zip` or `.ics` straight to the bot with a caption like "here is my new training plan". Darribni unzips it, reads every upcoming session, replaces my future workouts, clears the old ones from the Darribni calendar and confirms how many sessions it loaded. Emojis in the event titles tell it the sport (🏃 run, 🚴 ride, 🏋️/💪 strength, 🏁 race). `/import` does the same by reading the calendar directly.
 
-### 4. Google Calendar sync
+### 4. Weekly recap (every Sunday at 6pm)
+Every Sunday evening it sums up my past week's volume per sport and walks me through the coming week's sessions from my plan, with one focus tip. It never rewrites the plan.
+
+### 5. Google Calendar sync
 Every planned workout becomes an all-day event in a dedicated "Darribni" calendar, color coded by sport (runs and rides stand out at a glance), with the description and target duration.
 
 ---
@@ -48,14 +51,15 @@ Every planned workout becomes an all-day event in a dedicated "Darribni" calenda
 
 ![Darribni architecture](docs/architecture.png)
 
-Four coach workflows, one shared memory:
+Five coach workflows, one shared memory:
 
 | Workflow | Trigger | Job |
 |---|---|---|
-| [Darribni - Telegram](workflows/01-darribni-telegram-coach.json) | Telegram message | Conversational coach, can replan the week |
+| [Darribni - Telegram](workflows/01-darribni-telegram-coach.json) | Telegram message | Routes plan files, `/import` and chat; conversational coach |
 | [Darribni - Strava](workflows/02-darribni-strava-review.json) | New Strava activity | Save activity, review vs plan, notify |
-| [Darribni - Weekly Planner](workflows/03-darribni-weekly-planner.json) | Every Sunday 6pm | Generate next 7 days of workouts |
+| [Darribni - Weekly Planner](workflows/03-darribni-weekly-planner.json) | Every Sunday 6pm | Weekly recap of last week + next 7 days |
 | [Darribni - Google Calendar Sync](workflows/04-darribni-google-calendar-sync.json) | Called by other workflows | Create calendar event, store event ID |
+| [Darribni - Import Plan](workflows/06-darribni-import-plan.json) | Called by Telegram | Replace future workouts with sessions from a calendar file or Google Calendar |
 
 ### Side utility (not part of the coach): [Strava Social Manager](workflows/05-strava-social-manager-subworkflow.json)
 A separate workflow that automatically renames each new Strava activity with a clean Arabic title based on its type (home session, ride, trail run, run, walk), and keeps the original name as the description for virtual sessions (Zwift, MyWhoosh). It runs on a free model since it's pure rule following.
@@ -113,7 +117,7 @@ Both the chat and the weekly planner save workouts the same way and call the sam
 ## What's next
 
 - Persist coach notes updates automatically (the coach already outputs them, write-back is next)
-- Replace or update existing planned workouts instead of adding new ones when the plan changes
+- Push structured workouts to my Garmin watch
 - Voice messages on Telegram (talk to the coach right after a ride)
 - Weekly progress chart sent as an image
 - Multi-athlete onboarding so friends can use it
@@ -123,17 +127,20 @@ Both the chat and the weekly planner save workouts the same way and call the sam
 ## Run it yourself
 
 1. **Database:** create a PostgreSQL database and run [schema.sql](schema.sql). Add yourself as a row in `athletes` (with your Telegram and Strava IDs), an active row in `goals`, and at least one row in `strategy_phases`.
-2. **Import:** in n8n, go to *Workflows > Import from File* and import the 5 files in [workflows/](workflows/).
+2. **Import:** in n8n, go to *Workflows > Import from File* and import the 6 files in [workflows/](workflows/).
 3. **Credentials:** create these in n8n and select them on each node: Postgres, Telegram (bot token from @BotFather), Strava OAuth2, Google Calendar OAuth2, OpenRouter.
 4. **Link the sub-workflows:** on each *Execute Workflow* node, pick the matching workflow from the list (they show a `SELECT_...` placeholder after import).
-5. **Calendar:** in *Darribni - Google Calendar Sync*, pick the calendar you want workouts in.
+5. **Calendars:** in *Darribni - Google Calendar Sync*, pick the calendar you want workouts in. In *Darribni - Import Plan*, replace `YOUR_PLAN_CALENDAR_ID` (your plan calendar, used by `/import`) and `YOUR_DARRIBNI_CALENDAR_ID`.
 6. **Activate** the Telegram, Strava and Weekly Planner workflows, then text your bot.
 
 > All IDs, credentials and private values were removed from the exports.
 
 ---
 
-## Links
+## Security
 
-- Portfolio: https://addictedtoweb.com/projects-partnerships/
-- LinkedIn: https://www.linkedin.com/in/rachidbraymi/
+This repo is public, so secrets never live here. They stay in n8n Credentials.
+
+- [scripts/sanitize_n8n_export.py](scripts/sanitize_n8n_export.py): run on every n8n export before committing. Strips credential, workflow, webhook and calendar IDs and refuses to write if anything secret-looking is left.
+- [scripts/check_secrets.py](scripts/check_secrets.py): secret scanner. Runs as a pre-commit hook (`git config core.hooksPath .githooks`) and in CI with Gitleaks.
+- `.gitignore` blocks `.env`, keys, raw exports and `.ics` training plans. Use [.env.example](.env.example) for local config.
